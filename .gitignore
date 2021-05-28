@@ -1,7 +1,7 @@
-html/*
-csv/*
-pkl/*
-json/*
+*.html
+*.csv
+*.pkl
+*.json
 .idea/*
 !.gitignore
 venv/*

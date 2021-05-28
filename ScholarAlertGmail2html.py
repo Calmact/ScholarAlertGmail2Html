@@ -119,13 +119,20 @@ def pullMessage(gmail, messages, maxDays, maxRange, scholarMessages):
 # ##################################
 # Parsing the scholarMessages
 # Converting msg to pub
+# use forceRead = True when del the publication and re_read all scholarMessages, during this,
+# the scholarMessages[idx]['readFlag'] is clear
 def msg2Pub(scholarMessages, publications, forceRead = False):
+    if len(publications) == 0:
+        forceRead = True
     if forceRead:
         publications = list()
-    pubDict = mkPubDict(publications)
+        for i in range(len(scholarMessages)):
+            if 'readFlag' in scholarMessages[i]:
+                scholarMessages[i]['readFlag'] = False
+    pubTitDict = mkPubTitDict(publications)
     for idx in range(len(scholarMessages)):
         sMsg = scholarMessages[idx]
-        if 'readFlag' not in sMsg or forceRead:
+        if 'readFlag' not in sMsg or forceRead or sMsg['readFlag'] == False:
             if getEmailFrom(sMsg).find('scholaralerts-noreply@google.com') < 0:
                 continue
             body = base64.urlsafe_b64decode(sMsg['payload']['body']['data'])
@@ -134,14 +141,14 @@ def msg2Pub(scholarMessages, publications, forceRead = False):
             tagPubs = soup.body.find_all('h3')
             for tagPub in tagPubs:
                 title = getTitle(tagPub)
-                if not title in pubDict:
-                    pubDict[title] = len(publications)
+                if not title in pubTitDict:
+                    pubTitDict[title] = len(publications)
                     publications.append(Publication(tagPub))
-                publications[pubDict[title]].addHeaders(sMsg)
+                publications[pubTitDict[title]].addHeaders(sMsg)
             if math.fmod(idx+1, 200) == 0:
                 print('msg2Pub of idx = %d' %(idx+1))
         scholarMessages[idx]['readFlag'] = True
-    return publications, pubDict, idx + 1
+    return [publications, pubTitDict, idx + 1]
 
 # get subject from the header
 def getSubject(headers):
@@ -291,7 +298,7 @@ class Publication(object):
 
 # rate the publications and get the soted scores and the sorted idxe
 def rateSortPubs(publications, authVal):
-    scorePubs = [float(0) for i in range(len(publications))]
+    scorePubs = [0.0 for i in range(len(publications))]
     for idx in range(len(publications)):
         scorePubs[idx] = publications[idx].ratingScore(authVal)
     sorted_idx = sorted(range(len(scorePubs)),
@@ -440,13 +447,24 @@ def mkMsgDict(messages):
     return MsgDict
 
 # make the dict of titles of the publications
-def mkPubDict(publications):
-    pubDict = dict()
+def mkPubTitDict(publications):
+    pubTitDict = dict()
     if publications is None:
-        return pubDict
+        return pubTitDict
     for i in range(len(publications)):
-        pubDict[publications[i].bib['title']] = i
-    return pubDict
+        pubTitDict[publications[i].bib['title']] = i
+    return pubTitDict
+
+
+# make the dict of ids of the publications
+def mkPubIdDict(publications):
+    pubIdDict = dict()
+    if publications is None:
+        return pubIdDict
+    for i in range(len(publications)):
+        for id in publications.messageIDs:
+            pubIdDict[id] = i
+    return pubIdDict
 
 
 # Save the messages, scholarMessages, publications to pkl file,
@@ -458,16 +476,25 @@ def pklLoad(pklFileName):
             messages = pkls[0]
             scholarMessages = pkls[1]
             publications = pkls[2]
-            sglMsgDict = mkMsgDict(scholarMessages)
-            pubDict = mkPubDict(publications)
-            return messages, scholarMessages, publications, sglMsgDict, pubDict
+            # chack the type of the loaded, clear if not a list
+            if type(messages) != type([]):
+                message = list()
+            if type(scholarMessages) != type([]):
+                scholarMessages = list()
+            if type(publications) != type([]):
+                publications = list()
+            # sglMsgDict = mkMsgDict(scholarMessages)
+            # pubTitDict = mkPubTitDict(publications)
+            # return messages, scholarMessages, publications, sglMsgDict, pubTitDict
+            return messages, scholarMessages, publications
     else:
         messages = list()
         scholarMessages = list()
         publications = list()
-        sglMsgDict = dict()
-        pubDict = dict()
-        return messages, scholarMessages, sglMsgDict, publications, pubDict
+        # sglMsgDict = dict()
+        # pubTitDict = dict()
+        # return messages, scholarMessages, publications, sglMsgDict, pubTitDict
+        return messages, scholarMessages, publications
 
 # save messages, scholarMessages, publications as pkl into pkl folder
 def pklSave(pklFileName, messages, scholarMessages, publications):
@@ -577,7 +604,7 @@ def getPubATcsv(publications):
 if __name__ == '__main__':
     # load all the cached data
     pklFileName = 'pkl/pkl_data.pkl'
-    messages, scholarMessages, publications, sglMsgDict, pubDict = pklLoad(pklFileName)
+    messages, scholarMessages, publications = pklLoad(pklFileName)
 
     # get the GmailApi service
     gmail = getGmailApi()
@@ -594,13 +621,14 @@ if __name__ == '__main__':
     maxDays = 2
     maxRange = 500
     scholarMessages = pullMessage(gmail, messages, maxDays, maxRange, scholarMessages)
+    publications = list()
     pklSave(pklFileName, messages, scholarMessages, publications)
     print('Pull %d messages' % len(scholarMessages))
 
-    # Parse the scholarMessages get Publications and PubDict
+    # Parse the scholarMessages get Publications and pubTitDict
     t.tic()
-    # [publications, pubDict, nMsgParsed] = msg2Pub(scholarMessages, publications)
-    publications = msg2Pub(scholarMessages, publications)
+    forceRead = False
+    publications = msg2Pub(scholarMessages, publications, forceRead)[0]  #[publications, pubTitDict, nMsgParsed]
     t.toc()
     pklSave(pklFileName,messages, scholarMessages, publications)
     print('Got %d Pubs' % len(publications))
@@ -612,8 +640,8 @@ if __name__ == '__main__':
 
     # save the html file using the dateRange
     fileNameHtml = 'html/html_soup_joint1.html'
-    # dateRange = [date(2021,5,1), date(2021,5,31)]
-    dateRange = [date.today() - timedelta(days=2), date.today()]
+    dateRange = [date(2021,5,27), date(2021,5,31)]
+    # dateRange = [date.today() - timedelta(days=2), date.today()]
     t.tic()
     savPub2html(publications, sorted_idx, fileNameHtml, dateRange)
     t.toc()
