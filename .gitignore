@@ -1,0 +1,7 @@
+html/*
+csv/*
+pkl/*
+json/*
+.idea/*
+!.gitignore
+venv/*
