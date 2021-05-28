@@ -30,8 +30,7 @@ from os import path as ospath
 from os import makedirs
 import webbrowser
 
-
-# Use http proxy as a global proxy
+# # Use http proxy as a global proxy
 # os.environ["http_proxy"] = "http://127.0.0.1:10809"
 # os.environ["https_proxy"] = "http://127.0.0.1:10809"
 file_dir = os.path.dirname(__file__)
@@ -40,11 +39,16 @@ user_id = 'me'
 scholar_email = 'scholaralerts-noreply@google.com'
 cst_tz = timezone('Asia/Shanghai')
 BROWSER_COMMAND = "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe %s"
+t = TicToc()
+
 subType_AuthCitation = 'citation'
 subType_AuthNew = 'new'
 subType_AuthRelated = 'related'
-
-t = TicToc()
+typeVal = dict()
+typeVal[subType_AuthCitation] = 2
+typeVal[subType_AuthNew] = 8
+typeVal[subType_AuthRelated] = 1
+typeVal[''] = 0.5
 
 @retry(wait_random_min=100, wait_random_max=1000, stop_max_attempt_number=4)
 # Takes a message id and reads the message using google api
@@ -251,6 +255,9 @@ class Publication(object):
         self.messageIDs = []
         self.dateLists = []
         self.score = 0
+        self.jonlScore = 0
+        self.typeScores = []
+        self.authScores = []
 
         htmlstr = ' <html xmlns="http://www.w3.org/1999/xhtml" ' \
                   'xmlns:o="urn:schemas-microsoft-com:office:office">' \
@@ -283,28 +290,80 @@ class Publication(object):
         self.dateLists.append(datetimMsg)
 
     def ratingScore(self, authVal, jonlVal):
-        typeVal = dict()
-        typeVal[subType_AuthCitation] = 2
-        typeVal[subType_AuthNew] = 8
-        typeVal[subType_AuthRelated] = 1
-        typeVal[''] = 0.5
-        authType = pubSub2AuthorType(self.subjects)
         rateScore = 0
-        for aT in authType:
-            authScore = 1
-            typeScore = 1
-            if aT[0] in authVal:
-                authScore = authVal[aT[0]]
-            if aT[0] in authVal:
-                typeScore = authVal[aT[0]]
-            rateScore += authScore*typeScore
-        jonlScore = 1.0
-        if 'journal' in self.bib:
-            if self.bib['journal'] in jonlVal:
-                jonlScore = jonlVal[self.bib['journal']]
-        rateScore = rateScore*jonlScore
+        self.jonlScore = 0
+        self.typeScores = []
+        self.authScores = []
+        for i in range(len(self.subjects)):
+            [authScore, typeScore] = rateSub(self.subjects[i], authVal)
+            self.typeScores.append(typeScore)
+            self.authScores.append(authScore)
+            rateScore += authScore * typeScore
+        self.jonlScore = rateJonl(self, jonlVal)
+        rateScore = rateScore*self.jonlScore
         self.score = rateScore
-        return self.score
+        return rateScore
+
+# Use regular expressions to get the Alert author and Alert type
+# of the article email subject lists
+def pubSub2AuthorType(subListStr):
+    AuthorTypeList = list()
+    # re_name = '( ?\w+)( ?\w+)(-? ?\w+)'
+    re_name = '[\w\' .-]+'
+    re_ctbyEn = '(?<=to articles by )'+re_name
+    re_ctbyZh = re_name+'(?=的文章新增了 )'
+    re_nAtcEn = re_name+'(?= - new article)'
+    re_nAtcZh = re_name+'(?= - 新文章)'
+    re_rRshEn = re_name+'(?= - new related research)'
+    re_rRshZh = re_name+'(?= - 新的相关研究工作)'
+    for i in range(len(subListStr)):
+        auth = ''
+        type = ''
+        resultCE = re.search(re_ctbyEn, subListStr[i])
+        resultCZ = re.search(re_ctbyZh, subListStr[i])
+        resultNE = re.search(re_nAtcEn, subListStr[i])
+        resultNZ = re.search(re_nAtcZh, subListStr[i])
+        resultRE = re.search(re_rRshEn, subListStr[i])
+        resultRZ = re.search(re_rRshZh, subListStr[i])
+        if resultCE:
+            auth = resultCE[0]
+            type = subType_AuthCitation
+        elif resultCZ:
+            auth = resultCZ[0]
+            type = subType_AuthCitation
+        elif resultNE:
+            auth = resultNE[0]
+            type = subType_AuthNew
+        elif resultNZ:
+            auth = resultNZ[0]
+            type = subType_AuthNew
+        elif resultRE:
+            auth = resultRE[0]
+            type = subType_AuthRelated
+        elif resultRZ:
+            auth = resultRZ[0]
+            type = subType_AuthRelated
+        AuthorTypeList.append([auth, type])
+    return AuthorTypeList
+
+# parse a single subject and get the corresponding [authScore, typeScore].
+def rateSub(subject, authVal):
+    authScore = 1
+    typeScore = 1
+    [[auth, type]] = pubSub2AuthorType([subject])
+    if auth in authVal:
+        authScore = authVal[auth]
+    if type in authVal:
+        typeScore = typeVal[type]
+    return [authScore, typeScore]
+
+# parse a single publication, get the jonlScore
+def rateJonl(publication, jonlVal):
+    jonlScore = 1.0
+    if 'journal' in publication.bib:
+        if publication.bib['journal'] in jonlVal:
+            jonlScore = jonlVal[publication.bib['journal']]
+    return jonlScore
 
 # rate the publications and get the soted scores and the sorted idxe
 def rateSortPubs(publications, authVal, jonlVal):
@@ -539,47 +598,6 @@ def pklSave(pklFileName, messages, scholarMessages, publications):
     with open(pklFileName, 'wb') as f:
         pickle.dump(pkls, f)
 
-# Use regular expressions to get the Alert author and Alert type
-# of the article email subject lists
-def pubSub2AuthorType(subListStr):
-    AuthorTypeList = list()
-    # re_name = '( ?\w+)( ?\w+)(-? ?\w+)'
-    re_name = '[\w\' .-]+'
-    re_ctbyEn = '(?<=to articles by )'+re_name
-    re_ctbyZh = re_name+'(?=的文章新增了 )'
-    re_nAtcEn = re_name+'(?= - new article)'
-    re_nAtcZh = re_name+'(?= - 新文章)'
-    re_rRshEn = re_name+'(?= - new related research)'
-    re_rRshZh = re_name+'(?= - 新的相关研究工作)'
-    for i in range(len(subListStr)):
-        auth = ''
-        type = ''
-        resultCE = re.search(re_ctbyEn, subListStr[i])
-        resultCZ = re.search(re_ctbyZh, subListStr[i])
-        resultNE = re.search(re_nAtcEn, subListStr[i])
-        resultNZ = re.search(re_nAtcZh, subListStr[i])
-        resultRE = re.search(re_rRshEn, subListStr[i])
-        resultRZ = re.search(re_rRshZh, subListStr[i])
-        if resultCE:
-            auth = resultCE[0]
-            type = subType_AuthCitation
-        elif resultCZ:
-            auth = resultCZ[0]
-            type = subType_AuthCitation
-        elif resultNE:
-            auth = resultNE[0]
-            type = subType_AuthNew
-        elif resultNZ:
-            auth = resultNZ[0]
-            type = subType_AuthNew
-        elif resultRE:
-            auth = resultRE[0]
-            type = subType_AuthRelated
-        elif resultRZ:
-            auth = resultRZ[0]
-            type = subType_AuthRelated
-        AuthorTypeList.append([auth, type])
-    return AuthorTypeList
 
 # change a list of strings to a list of list string
 def listOfList(strList = list()):
@@ -689,8 +707,6 @@ def getPubJonlcsv(publications):
 #     sorted_valStrList = sorted(valStrList, key=lambda k: k[1].split(' ')[-1], reverse=False)
 #     return [sorted_valStrList, sorted_idx]
 
-
-
 if __name__ == '__main__':
     # load all the cached data
 
@@ -735,7 +751,7 @@ if __name__ == '__main__':
 
     # save the html file using the dateRange
     # fileNameHtml = 'html/html_soup_joint1.html'
-    dateRange = [date(2021,4,1), date(2021,4,15)]
+    dateRange = [date(2021,4,1), date(2021,5,31)]
     # dateRange = [date.today() - timedelta(days=2), date.today()]
     t.tic()
     fileNameHtml = savPub2html(publications, sorted_idx,0, dateRange)
