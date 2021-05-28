@@ -25,22 +25,24 @@ from bibtexparser.bparser import BibTexParser
 from bibtexparser.customization import convert_to_unicode
 from bibtexparser.bibdatabase import BibDatabase
 from bibtexparser.bwriter import BibTexWriter
+import os
+from os import path as ospath
+import webbrowser
+
 
 # Use http proxy as a global proxy
-import os
 os.environ["http_proxy"] = "http://127.0.0.1:10809"
 os.environ["https_proxy"] = "http://127.0.0.1:10809"
-
-# If modifying these scopes, delete the file token.pickle.
+file_dir = os.path.dirname(__file__)
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 user_id = 'me'
 scholar_email = 'scholaralerts-noreply@google.com'
-file_dir = os.path.dirname(__file__)
 cst_tz = timezone('Asia/Shanghai')
-
+BROWSER_COMMAND = "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe %s"
 subType_AuthCitation = 'citation'
 subType_AuthNew = 'new'
 subType_AuthRelated = 'related'
+
 t = TicToc()
 
 @retry(wait_random_min=100, wait_random_max=1000, stop_max_attempt_number=4)
@@ -116,7 +118,7 @@ def pullMessage(gmail, messages, maxDays, maxRange, scholarMessages):
     scholarMessages = sorted(scholarMessages, key=lambda k: k['id'], reverse=True)
     return scholarMessages
 
-# ##################################
+
 # Parsing the scholarMessages
 # Converting msg to pub
 # use forceRead = True when del the publication and re_read all scholarMessages, during this,
@@ -133,7 +135,7 @@ def msg2Pub(scholarMessages, publications, forceRead = False):
     for idx in range(len(scholarMessages)):
         sMsg = scholarMessages[idx]
         if 'readFlag' not in sMsg or forceRead or sMsg['readFlag'] == False:
-            if getEmailFrom(sMsg).find('scholaralerts-noreply@google.com') < 0:
+            if getEmailFrom(sMsg).find(scholar_email) < 0:
                 continue
             body = base64.urlsafe_b64decode(sMsg['payload']['body']['data'])
             soup: BeautifulSoup = BeautifulSoup(body, 'html.parser')
@@ -157,11 +159,11 @@ def getSubject(headers):
             return header['value']
 
 # Change special characters in a string into spaces to become a legal file name
-def correctr_FileName(strName):
+def correct_FileName(strName, str1=' '):
     error_set = ['/', '\\', ':', '*', '?', '"', '|', '<', '>']
     for c in strName:
         if c in error_set:
-            strName = strName.replace(c, ' ')
+            strName = strName.replace(c, str1)
     return strName
 
 # get title string from a raw paper
@@ -308,9 +310,24 @@ def rateSortPubs(publications, authVal):
     return [scorePubs, sorted_scorePubs, sorted_idx]
 
 # save the pub to html file according to date range
-def savPub2html(publications, sorted_idx, fileNameHtml = 'html_soup_joint.html', dateRange=0):
+def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
     if dateRange == 0:
         dateRange = [date.today() - timedelta(days=30), date.today()]
+    trueDateTimeRange = [datetime.now()]*2
+    pubDatetimeMin = list()
+    pubDatetimeMax = list()
+    pub2html = list()
+    idx_pub = 0
+    for i in range(len(sorted_idx)):
+        pub = publications[sorted_idx[i]]
+        if (min(pub.dateLists).date() - dateRange[0]).days >= 0 and \
+                (min(pub.dateLists).date() - dateRange[1]).days <= 0:
+            pub2html.append(pub)
+            pubDatetimeMin.append(min(pub.dateLists))
+            pubDatetimeMax.append(max(pub.dateLists))
+    trueDateTimeRange[0] = min(pubDatetimeMin)
+    trueDateTimeRange[1] = max(pubDatetimeMax)
+
     htmlstr = ' <html xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">' \
               '<head> <meta http-equiv="Content-Type" content="text/html;charset=UTF-8" /> <style>' \
               '.main{ text-align: left;  background-color: #fff; margin: auto; ' \
@@ -322,8 +339,8 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 'html_soup_joint.html',
               '</div></body></html>'
     soup = BeautifulSoup(htmlstr, 'html.parser')
     strHd = 'Google Scholar Alert Collection'
-    strRg = 'From ' + dateRange[0].strftime("%Y-%m-%d") + ' to ' + \
-            dateRange[1].strftime("%Y-%m-%d")
+    strRg = 'From ' + trueDateTimeRange[0].strftime("%Y-%m-%d %H:%M:%S") + ' to ' + \
+            trueDateTimeRange[1].strftime("%Y-%m-%d %H:%M:%S")
     # strRg = 'From ' + publications[-1].dateLists[-1].strftime("%Y-%m-%d %H:%M:%S")+ ' to '  +\
     #     publications[0].dateLists[0].strftime("%Y-%m-%d %H:%M:%S")
     a = soup.new_tag('title')
@@ -342,6 +359,8 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 'html_soup_joint.html',
     a.insert(0, strHd)
     soup.html.body.insert(0, a)
     # saveSoupTag(soup)
+
+
     idx_pub = 0
     for i in range(len(sorted_idx)):
         pub = publications[sorted_idx[i]]
@@ -366,7 +385,10 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 'html_soup_joint.html',
             pubTag = copy.copy(pub.soup.html.body.div.find_next_sibling('div'))
             soup.html.body.div.next_sibling.next_sibling.append(pubTag)
             soup.html.body.div.next_sibling.next_sibling.append(soup.new_tag('br'))
+    if fileNameHtml == 0:
+        fileNameHtml = ospath.join(file_dir, 'html/'+correct_FileName(strRg)+'.html')
     saveSoupTag(soup, fileNameHtml)
+    return fileNameHtml
 
 # save the souptag file as html for test use
 def saveSoupTag(soup, fileNameHtml = 'html/temp.html'):
@@ -639,13 +661,17 @@ if __name__ == '__main__':
     # print(str(sorted_scorePubs) + '\n' + str(sorted_idx))
 
     # save the html file using the dateRange
-    fileNameHtml = 'html/html_soup_joint1.html'
+    # fileNameHtml = 'html/html_soup_joint1.html'
     dateRange = [date(2021,5,27), date(2021,5,31)]
     # dateRange = [date.today() - timedelta(days=2), date.today()]
     t.tic()
-    savPub2html(publications, sorted_idx, fileNameHtml, dateRange)
+    fileNameHtml = savPub2html(publications, sorted_idx,0, dateRange)
     t.toc()
     print('Html file saved')
+
+
+    web = webbrowser.get(BROWSER_COMMAND)
+    web.open(fileNameHtml, new=2)
 
     # # Test of Rate score
     # idx = 108
