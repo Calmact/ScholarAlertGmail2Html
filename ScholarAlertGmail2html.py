@@ -27,6 +27,7 @@ from bibtexparser.bibdatabase import BibDatabase
 from bibtexparser.bwriter import BibTexWriter
 import os
 from os import path as ospath
+from os import makedirs
 import webbrowser
 
 
@@ -184,6 +185,8 @@ def getGmailApi():
     # The file token.pickle stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
+    if not ospath.exists('json/'):
+        makedirs('json/')
     if os.path.exists('json/token.json'):
         creds = Credentials.from_authorized_user_file('json/token.json', SCOPES)
         # If there are no (valid) credentials available, let the user log in.
@@ -279,7 +282,7 @@ class Publication(object):
         self.messageIDs.append(sMsg['id'])
         self.dateLists.append(datetimMsg)
 
-    def ratingScore(self, authVal):
+    def ratingScore(self, authVal, jonlVal):
         typeVal = dict()
         typeVal[subType_AuthCitation] = 2
         typeVal[subType_AuthNew] = 8
@@ -295,14 +298,19 @@ class Publication(object):
             if aT[0] in authVal:
                 typeScore = authVal[aT[0]]
             rateScore += authScore*typeScore
+        jonlScore = 1.0
+        if 'journal' in self.bib:
+            if self.bib['journal'] in jonlVal:
+                jonlScore = jonlVal[self.bib['journal']]
+        rateScore = rateScore*jonlScore
         self.score = rateScore
         return self.score
 
 # rate the publications and get the soted scores and the sorted idxe
-def rateSortPubs(publications, authVal):
+def rateSortPubs(publications, authVal, jonlVal):
     scorePubs = [0.0 for i in range(len(publications))]
     for idx in range(len(publications)):
-        scorePubs[idx] = publications[idx].ratingScore(authVal)
+        scorePubs[idx] = publications[idx].ratingScore(authVal, jonlVal)
     sorted_idx = sorted(range(len(scorePubs)),
                        key=lambda k: publications[k].score,
                        reverse=True)
@@ -317,6 +325,7 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
     pubDatetimeMin = list()
     pubDatetimeMax = list()
     pub2html = list()
+
     idx_pub = 0
     for i in range(len(sorted_idx)):
         pub = publications[sorted_idx[i]]
@@ -327,7 +336,7 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
             pubDatetimeMax.append(max(pub.dateLists))
     trueDateTimeRange[0] = min(pubDatetimeMin)
     trueDateTimeRange[1] = max(pubDatetimeMax)
-
+    # html head
     htmlstr = ' <html xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">' \
               '<head> <meta http-equiv="Content-Type" content="text/html;charset=UTF-8" /> <style>' \
               '.main{ text-align: left;  background-color: #fff; margin: auto; ' \
@@ -338,20 +347,23 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
               'color:#222;width:100%;max-width:600px"/>' \
               '</div></body></html>'
     soup = BeautifulSoup(htmlstr, 'html.parser')
-    strHd = 'Google Scholar Alert Collection'
+    strHd = 'Google Scholar Alert Collection'  # page title
     strRg = 'From ' + trueDateTimeRange[0].strftime("%Y-%m-%d %H:%M:%S") + ' to ' + \
-            trueDateTimeRange[1].strftime("%Y-%m-%d %H:%M:%S")
+            trueDateTimeRange[1].strftime("%Y-%m-%d %H:%M:%S") # html time range
     # strRg = 'From ' + publications[-1].dateLists[-1].strftime("%Y-%m-%d %H:%M:%S")+ ' to '  +\
     #     publications[0].dateLists[0].strftime("%Y-%m-%d %H:%M:%S")
+    # add html title in head
     a = soup.new_tag('title')
     a.insert(0, strHd+'  -  '+strRg)
     soup.html.head.insert(0, a)
+    # add date time range
     a = soup.new_tag("div")
     a['style'] = "font-family:arial,sans-serif;text-align: left; background-color: #fff; " \
                  "margin: auto; position: absolute; top: 50px; left: 0; right: 0; bottom: 0;" \
                  "font-size:20px;line-height:40px;color:#222;width:100%;max-width:600px"
     a.insert(0, strRg)
     soup.html.body.insert(0, a)
+    # add page title
     a = soup.new_tag("div")
     a['style'] = "font-family:arial,sans-serif;text-align: left;  background-color: #fff;" \
                  " margin: auto; font-weight:bold;position: absolute; top: 00px; left: 0; right: 0; bottom: 0;" \
@@ -386,7 +398,9 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
             soup.html.body.div.next_sibling.next_sibling.append(pubTag)
             soup.html.body.div.next_sibling.next_sibling.append(soup.new_tag('br'))
     if fileNameHtml == 0:
-        fileNameHtml = ospath.join(file_dir, 'html/'+correct_FileName(strRg)+'.html')
+        fileNameHtml = ospath.join(file_dir, 'html/'+correct_FileName(strRg,'_')+'.html')
+    if not ospath.exists('html/'):
+        makedirs('html/')
     saveSoupTag(soup, fileNameHtml)
     return fileNameHtml
 
@@ -422,13 +436,11 @@ def joinMsgs(messages, messagesOld):
 # get all the messagesID labeled as unread and send from scholar email
 def ListMessagesWithLabels(service, user_id, labels, messagesOld):
     """List all Messages of the user's mailbox with label_ids applied.
-
     Args:
       service: Authorized Gmail API service instance.
       user_id: User's email address. The special value "me"
       can be used to indicate the authenticated user.
       label_ids: Only return Messages with these labelIds applied.
-
     Returns:
       List of Messages that have all required Labels applied. Note that the
       returned list contains Message IDs, you must use get with the
@@ -510,6 +522,8 @@ def pklLoad(pklFileName):
             # return messages, scholarMessages, publications, sglMsgDict, pubTitDict
             return messages, scholarMessages, publications
     else:
+        if not ospath.exists('pkl/'):
+            makedirs('pkl/')
         messages = list()
         scholarMessages = list()
         publications = list()
@@ -603,9 +617,13 @@ def getPubATcsv(publications):
             authValHd = next(f_csv)
             for row in f_csv:
                 authValList.append(row)
+        authValList = sorted(authValList,
+                             key=lambda k: k[1].split(' ')[-1])
         for avl in authValList:
             authVal[avl[1]] = float(avl[0])
     else:
+        if not ospath.exists('csv/'):
+            makedirs('csv/')
         subDict = dict()
         for pub in publications:
             for sub in pub.subjects:
@@ -617,14 +635,65 @@ def getPubATcsv(publications):
         for auth in AuthorTypeList:
             authDict[auth[0]] = 1
         authList = [i for i in authDict.keys()]
+        authList = sorted(authList,
+                             key=lambda k: k.split(' ')[-1])
         authValList = ['1.0']*len(authList)
+        if not ospath.exists('csv/'):
+            makedirs('csv/')
         saveCSV('csv/AuthVal.csv', ['Value', 'Author'], authValList, authList)
         for i in range(len(authList)):
             authVal[authList[i]] = 1.0
     return authVal
 
+
+
+# get the Journal-Value list from JonlVal.csv in csv folder,
+# if AuthVal.csv is not exist, create a new AuthVal.csv
+# using the alert subjects in publications
+def getPubJonlcsv(publications):
+    jonlVal = dict()
+    if os.access('csv/JonlVal.csv', os.F_OK):
+        jonlValHd = list()
+        jonlValList = list()
+        with open('csv/JonlVal.csv', encoding='gb18030') as f:
+            f_csv = csv.reader(f)
+            jonlValHd = next(f_csv)
+            for row in f_csv:
+                jonlValList.append(row)
+        jonlValList = sorted(jonlValList,
+                             key=lambda k: k[1])
+        for avl in jonlValList:
+            jonlVal[avl[1]] = float(avl[0])
+    else:
+        if not ospath.exists('csv/'):
+            makedirs('csv/')
+        jonlDict = dict()
+        for pub in publications:
+            if 'journal' in pub.bib:
+                jonlDict[pub.bib['journal']] = 1
+        jonlListStr = [i for i in jonlDict.keys()]
+        jonlListStr = sorted(jonlListStr)
+        jonlValList = ['1.0']*len(jonlListStr)
+        if not ospath.exists('csv/'):
+            makedirs('csv/')
+        saveCSV('csv/JonlVal.csv', ['Value', 'Journal'], jonlValList, jonlListStr)
+        for i in range(len(jonlListStr)):
+            jonlVal[jonlListStr[i]] = 1.0
+    return jonlVal
+
+
+# # sort the val_string list
+# def sorted_valStr(valStrList):
+#     sorted_idx = sorted(range(len(valStrList)),
+#                        key=lambda k: valStrList[k][1])
+#     sorted_valStrList = sorted(valStrList, key=lambda k: k[1].split(' ')[-1], reverse=False)
+#     return [sorted_valStrList, sorted_idx]
+
+
+
 if __name__ == '__main__':
     # load all the cached data
+
     pklFileName = 'pkl/pkl_data.pkl'
     messages, scholarMessages, publications = pklLoad(pklFileName)
 
@@ -640,16 +709,16 @@ if __name__ == '__main__':
     print('Found %d messages' % len(messages))
 
     # pull the scholarMessages from GmailApi
-    maxDays = 2
-    maxRange = 500
+    maxDays = 65
+    maxRange = 5000
     scholarMessages = pullMessage(gmail, messages, maxDays, maxRange, scholarMessages)
-    publications = list()
     pklSave(pklFileName, messages, scholarMessages, publications)
     print('Pull %d messages' % len(scholarMessages))
 
     # Parse the scholarMessages get Publications and pubTitDict
     t.tic()
     forceRead = False
+    # forceRead = True
     publications = msg2Pub(scholarMessages, publications, forceRead)[0]  #[publications, pubTitDict, nMsgParsed]
     t.toc()
     pklSave(pklFileName,messages, scholarMessages, publications)
@@ -657,21 +726,28 @@ if __name__ == '__main__':
 
     # rating the Pubs
     authVal = getPubATcsv(publications)
-    [scorePubs, sorted_scorePubs, sorted_idx] = rateSortPubs(publications, authVal)
+    jonlVal = getPubJonlcsv(publications)
+    t.tic()
+    [scorePubs, sorted_scorePubs, sorted_idx] = rateSortPubs(publications, authVal, jonlVal)
+    t.toc()
+    print('Sorte the Pubs')
     # print(str(sorted_scorePubs) + '\n' + str(sorted_idx))
 
     # save the html file using the dateRange
     # fileNameHtml = 'html/html_soup_joint1.html'
-    dateRange = [date(2021,5,27), date(2021,5,31)]
+    dateRange = [date(2021,4,1), date(2021,4,15)]
     # dateRange = [date.today() - timedelta(days=2), date.today()]
     t.tic()
     fileNameHtml = savPub2html(publications, sorted_idx,0, dateRange)
     t.toc()
-    print('Html file saved')
+    print('Html file saved at %s' %fileNameHtml)
 
 
     web = webbrowser.get(BROWSER_COMMAND)
-    web.open(fileNameHtml, new=2)
+    try:
+        web.open(fileNameHtml, new = 2)
+    except:
+        print('Open the html file failed')
 
     # # Test of Rate score
     # idx = 108
