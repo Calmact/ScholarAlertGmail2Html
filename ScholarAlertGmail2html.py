@@ -32,8 +32,8 @@ import webbrowser
 
 
 # Use http proxy as a global proxy
-os.environ["http_proxy"] = "http://127.0.0.1:10809"
-os.environ["https_proxy"] = "http://127.0.0.1:10809"
+# os.environ["http_proxy"] = "http://127.0.0.1:10809"
+# os.environ["https_proxy"] = "http://127.0.0.1:10809"
 file_dir = os.path.dirname(__file__)
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 user_id = 'me'
