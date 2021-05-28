@@ -353,7 +353,7 @@ def rateSub(subject, authVal):
     [[auth, type]] = pubSub2AuthorType([subject])
     if auth in authVal:
         authScore = authVal[auth]
-    if type in authVal:
+    if type in typeVal:
         typeScore = typeVal[type]
     return [authScore, typeScore]
 
@@ -430,14 +430,13 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
     a.insert(0, strHd)
     soup.html.body.insert(0, a)
     # saveSoupTag(soup)
-
-
     idx_pub = 0
     for i in range(len(sorted_idx)):
         pub = publications[sorted_idx[i]]
         if (min(pub.dateLists).date()-dateRange[0]).days >= 0 and \
                 (min(pub.dateLists).date()-dateRange[1]).days <= 0:
             idx_pub += 1
+            # add a idx before the title
             pubTag = copy.copy(pub.soup.html.body.div)
             a = soup.new_tag('span')
             a['style'] = "font-size:11px;font-weight:bold;color:#1a0dab;vertical-align:2px"
@@ -446,6 +445,9 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
             a.insert(0, strNum)
             pubTag.h3.insert(0, a)
             soup.html.body.div.next_sibling.next_sibling.append(pubTag)
+            # add the subject and the datetime of the subject
+            # TODO add the subject scores (authScore and typeScore)
+            #
             for j in range(len(pub.dateLists)):
                 a = soup.new_tag("div")
                 a['style'] = "font-family:arial,sans-serif;font-size:13px;line-height:18px;color:#993456"
