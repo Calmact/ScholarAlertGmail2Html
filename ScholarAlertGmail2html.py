@@ -392,7 +392,7 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
                 (min(pub.dateLists).date() - dateRange[1]).days <= 0:
             pub2html.append(pub)
             pubDatetimeMin.append(min(pub.dateLists))
-            pubDatetimeMax.append(max(pub.dateLists))
+            pubDatetimeMax.append(min(pub.dateLists))
     trueDateTimeRange[0] = min(pubDatetimeMin)
     trueDateTimeRange[1] = max(pubDatetimeMax)
     # html head
@@ -618,96 +618,109 @@ def saveCSV(fileName, header, list1=list(), list2=list()):
         list2 = listOfList(list2)
     for i in range(len(list1)):
         data.append(list1[i]+list2[i])
-    with open(fileName, 'w', newline='', encoding='gb18030') as csvfile:  # gb2312 gb18030 utf-8
+    with open(fileName, 'w', newline='', encoding='utf-8_sig') as csvfile:  # gb2312 gb18030 utf-8
         f_csv = csv.DictWriter(csvfile, header)
         f_csv.writeheader()
         spamwriter = csv.writer(csvfile)
         spamwriter.writerows(data)
 
-# get the author-value list from AuthVal.csv in csv folder,
-# if AuthVal.csv is not exist, create a new AuthVal.csv
-# using the alert subjects in publications
-def getPubATcsv(publications):
-    authVal = dict()
-    if os.access('csv/AuthVal.csv', os.F_OK):
-        authValHd = list()
-        authValList = list()
-        with open('csv/AuthVal.csv', encoding='gb18030') as f:
+# get the author/journal-value list from AuthVal/JonlVal.csv in csv folder,
+# if AuthVal/Jonl.csv is not exist, create a new AuthVal/JonlVal.csv
+# using the alert subjects in publications for author in AuthVal
+def getAuthJonlcsv(publications, filePathName ='csv/AuthVal.csv'):
+    fileName = filePathName.split('.')[0].split('/')[1]
+    ajValDict = dict()
+    if os.access(filePathName, os.F_OK):
+        ajValHd = list()
+        ajValList = list()
+        with open(filePathName, encoding='utf-8_sig') as f:  #encoding='gb18030'
             f_csv = csv.reader(f)
-            authValHd = next(f_csv)
+            ajValHd = next(f_csv)
             for row in f_csv:
-                authValList.append(row)
-        authValList = sorted(authValList,
-                             key=lambda k: k[1].split(' ')[-1])
-        for avl in authValList:
-            authVal[avl[1]] = float(avl[0])
+                ajValList.append(row)
+        for i in range(len(ajValList)-1, -1, -1):
+            if len(ajValList[i]) != 2:
+                ajValList.pop(i)
+        if 'Auth' in filePathName:
+            ajValList = sorted(ajValList,
+                                 key=lambda k: k[1].split(' ')[-1])
+        elif 'Jonl' in filePathName:
+            ajValList = sorted(ajValList,
+                                 key=lambda k: k[1])
+        for avl in ajValList:
+            ajValDict[avl[1]] = float(avl[0])
     else:
         if not ospath.exists('csv/'):
             makedirs('csv/')
-        subDict = dict()
-        for pub in publications:
-            for sub in pub.subjects:
-                subDict[sub] = 1
-        subListStr = [i for i in subDict.keys()]
-        AuthorTypeList = pubSub2AuthorType(subListStr)
-        # saveCSV('csv/Auth_Type_Sub.csv', ['Author', 'Type', 'Subject'], AuthorTypeList, subListStr)
-        authDict = dict()
-        for auth in AuthorTypeList:
-            authDict[auth[0]] = 1
-        authList = [i for i in authDict.keys()]
-        authList = sorted(authList,
-                             key=lambda k: k.split(' ')[-1])
-        authValList = ['1.0']*len(authList)
-        if not ospath.exists('csv/'):
-            makedirs('csv/')
-        saveCSV('csv/AuthVal.csv', ['Value', 'Author'], authValList, authList)
-        for i in range(len(authList)):
-            authVal[authList[i]] = 1.0
-    return authVal
+        ajDict = dict()
+        if 'Auth' in filePathName:
+            subDict = dict()
+            for pub in publications:
+                for sub in pub.subjects:
+                    subDict[sub] = 1
+            subListStr = [i for i in subDict.keys()]
+            AuthorTypeList = pubSub2AuthorType(subListStr)
+            # saveCSV('csv/Auth_Type_Sub.csv', ['Author', 'Type', 'Subject'], AuthorTypeList, subListStr)
+            for auth in AuthorTypeList:
+                ajDict[auth[0]] = 1.0
+        elif'Jonl' in filePathName:
+            for pub in publications:
+                if 'journal' in pub.bib:
+                    ajDict[pub.bib['journal']] = 1.0
+        ajList = [i for i in ajDict.keys()]
+        for i in range(len(ajList)):
+            ajValDict[ajList[i]] = 1.0
+        saveAjvDict(ajValDict, filePathName)
+    return ajValDict
 
+def loadAuthJonlVal(getAuthJonlcsv, fileName ='AuthVal'):
+    ajValDict = getAuthJonlcsv(publications,'csv/'+fileName+'.csv')
+    if os.access('csv/'+fileName+' - bak.csv', os.F_OK):
+        ajVal_old = getAuthJonlcsv(publications,'csv/'+fileName+'-backup.csv')
+        #update condition.
+        # a. key exists in ajValDict. force update if the ajValDict key value is 1.
+        # b. New key value does not exist: create New key and value
+        for ajVo in ajVal_old:
+            if ajVo in ajValDict:
+                if ajValDict[ajVo] == 1:
+                    ajValDict[ajVo] = ajVal_old[ajVo]
+            else:
+                ajValDict[ajVo] = ajVal_old[ajVo]
+    if os.access('csv/' + fileName + '-simplify.csv', os.F_OK):
+        ajVal_simpl = getAuthJonlcsv(publications,'csv/'+fileName+'-simplify.csv')
+        #update condition.
+        # force update
+        for ajVo in ajVal_simpl:
+            ajValDict[ajVo] = ajVal_simpl[ajVo]
+    # save the ajValDict and simplified ajValDict
+    saveAjvDict(ajValDict, 'csv/' + fileName + '.csv')
+    ajValDict_simpl = ajValDict
+    for key in list(ajValDict_simpl):
+        if ajValDict_simpl[key] == 1:
+            ajValDict_simpl.pop(key)
+    saveAjvDict(ajValDict_simpl, 'csv/' + fileName + '-simplify.csv')
+    return ajValDict
 
+def saveAjvDict(ajValDict, filePathName):
+    ajList = [i for i in ajValDict.keys()]
+    if 'Auth' in filePathName:
+        if 'simp' in filePathName:
+            ajList = sorted(ajList,
+                            key=lambda k: ajValDict[k], reverse=True)
+        else:
+            ajList = sorted(ajList,
+                            key=lambda k: k.split(' ')[-1])
+        valList = [str(ajValDict[i]) for i in ajList]
+        saveCSV(filePathName, ['Value', 'Author'], valList, ajList)
+    elif 'Jonl' in filePathName:
+        if 'simp' in filePathName:
+            ajList = sorted(ajList,
+                            key=lambda k: [ajValDict[k],ajList], reverse=True)
+        else:
+            ajList = sorted(ajList)
+        valList = [str(ajValDict[i]) for i in ajList]
+        saveCSV(filePathName, ['Value', 'Jonl'], valList, ajList)
 
-# get the Journal-Value list from JonlVal.csv in csv folder,
-# if AuthVal.csv is not exist, create a new AuthVal.csv
-# using the alert subjects in publications
-def getPubJonlcsv(publications):
-    jonlVal = dict()
-    if os.access('csv/JonlVal.csv', os.F_OK):
-        jonlValHd = list()
-        jonlValList = list()
-        with open('csv/JonlVal.csv', encoding='gb18030') as f:
-            f_csv = csv.reader(f)
-            jonlValHd = next(f_csv)
-            for row in f_csv:
-                jonlValList.append(row)
-        jonlValList = sorted(jonlValList,
-                             key=lambda k: k[1])
-        for avl in jonlValList:
-            jonlVal[avl[1]] = float(avl[0])
-    else:
-        if not ospath.exists('csv/'):
-            makedirs('csv/')
-        jonlDict = dict()
-        for pub in publications:
-            if 'journal' in pub.bib:
-                jonlDict[pub.bib['journal']] = 1
-        jonlListStr = [i for i in jonlDict.keys()]
-        jonlListStr = sorted(jonlListStr)
-        jonlValList = ['1.0']*len(jonlListStr)
-        if not ospath.exists('csv/'):
-            makedirs('csv/')
-        saveCSV('csv/JonlVal.csv', ['Value', 'Journal'], jonlValList, jonlListStr)
-        for i in range(len(jonlListStr)):
-            jonlVal[jonlListStr[i]] = 1.0
-    return jonlVal
-
-
-# # sort the val_string list
-# def sorted_valStr(valStrList):
-#     sorted_idx = sorted(range(len(valStrList)),
-#                        key=lambda k: valStrList[k][1])
-#     sorted_valStrList = sorted(valStrList, key=lambda k: k[1].split(' ')[-1], reverse=False)
-#     return [sorted_valStrList, sorted_idx]
 
 if __name__ == '__main__':
     # load all the cached data
@@ -742,9 +755,9 @@ if __name__ == '__main__':
     pklSave(pklFileName,messages, scholarMessages, publications)
     print('Got %d Pubs' % len(publications))
 
-    # rating the Pubs
-    authVal = getPubATcsv(publications)
-    jonlVal = getPubJonlcsv(publications)
+    # # rating the Pubs
+    authVal = loadAuthJonlVal(getAuthJonlcsv, 'AuthVal')
+    jonlVal = loadAuthJonlVal(getAuthJonlcsv, 'JonlVal')
     t.tic()
     [scorePubs, sorted_scorePubs, sorted_idx] = rateSortPubs(publications, authVal, jonlVal)
     t.toc()
@@ -753,13 +766,12 @@ if __name__ == '__main__':
 
     # save the html file using the dateRange
     # fileNameHtml = 'html/html_soup_joint1.html'
-    dateRange = [date(2021,4,1), date(2021,5,31)]
-    # dateRange = [date.today() - timedelta(days=2), date.today()]
+    dateRange = [date(2021,5,1), date(2021,5,7)]
+    # dateRange = [date.today() - timedelta(days=60), date.today()]
     t.tic()
     fileNameHtml = savPub2html(publications, sorted_idx,0, dateRange)
     t.toc()
     print('Html file saved at %s' %fileNameHtml)
-
 
     web = webbrowser.get(BROWSER_COMMAND)
     try:
@@ -775,7 +787,12 @@ if __name__ == '__main__':
     #     pub.ratingScore(authVal)
     #     print(pub.score)
 
-    # # TO DO : encode of Fernández
+    # # TODO1 : encode of Fernández //
+    # 1. use encoding='utf-8_sig' for encode the save and read file
+    # 2. use re_name = '[\w\' .-]+' to match the name in re.match
+    # rateSub(subject, authVal) pubSub2AuthorType([subject])
+
+
     # re_name = '[\w\' .-]+'
     # re_ctbyZh = re_name + '(?=的文章新增了 )'
     # a = 'María R. Fernández-Ruiz的文章新增了 2 次引用'

@@ -1,7 +1,10 @@
 *.html
-*.csv
 *.pkl
 *.json
 .idea/*
 !.gitignore
 venv/*
+!pkl/your_pkl_data.pkl
+!json/your_credentials.json
+!json/your_token.json
+!html/From 2021-05-01 06_02_26 to 2021-05-07 01_20_03.html
