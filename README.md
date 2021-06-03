@@ -16,7 +16,6 @@
 * 根据快讯作者权值、快讯类型权值和发表期刊权值，对文章进行排序。  
 6. Summarize the sorted publications into a single `html` file in `/html` folder.
 * 将排序后的文章汇总成成单个`html`文件，保存在`/html`文件夹下。 
-
 ## Setting for first use / 初次使用
 * Follow the steps in [Gmail API Client Library](https://developers.google.com/gmail/api/quickstart/python) ,  rename the `client_secret_XXXXXXXX_.json` to
 `credentials.json`  and place it into the `/json` folder. When you firstly run the `ScholarAlertGmail2html.py`, you will get a `token.joson` in `/json` folder.
@@ -33,12 +32,11 @@
 ## Usage
 * Run `ScholarAlertGmail2html.py` using Python 3.
 * If you can't access the google api directly, you can use a proxy as a global proxy by remove the markers in the `ScholarAlertGmail2html.py`
-```python
-import os
-# Use http proxy as a global proxy
-os.environ["http_proxy"] = "http://127.0.0.1:10809"
-os.environ["https_proxy"] = "http://127.0.0.1:10809"
-```
-
+  ```python
+  import os
+  # Use http proxy as a global proxy
+  os.environ["http_proxy"] = "http://127.0.0.1:10809"
+  os.environ["https_proxy"] = "http://127.0.0.1:10809"
+  ```
 ## CSV Files in `/CSV`
 ![img.png](png/csvFiles.png)
