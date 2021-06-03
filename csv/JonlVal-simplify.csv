@@ -1,39 +1,53 @@
 ﻿Value,Jonl
-10.0,Optica
+10.1,Optica
 10.0,Science
 8.0,Optics Letters
 7.0,ACS Photonics
 7.0,Light
 7.0,Light: Science & Applications
+7.0,Light: Science & …
+7.0,Light: Science and …
 6.0,IEEE Internet of Things Journal
+6.0,Journal of Lightwave
 6.0,Journal of Lightwave 
 6.0,Journal of Lightwave Technology
 6.0,Journal of Lightwave …
 6.0,Nature Photonics
 6.0,Optics Express
 6.0,Opto-Electronic Advances
+6.0,… of Lightwave Technology
 5.0,Optics and Lasers in Engineering
 4.0,Applied Optics
 4.0,Applied Physics Express
+4.0,Applied optics
 4.0,Nature Communications
 4.0,Opto-Electronics Review
 4.0,Photonics Research
 4.0,Scientific Reports
 3.0,Applied Physics Letters
+3.0,Asia Communications and Photonics Conference
+3.0,Asia Communications and Photonics …
+3.0,Asia Communications and …
 3.0,Chinese Optics Letters
 3.0,Chinese Physics Letters
 3.0,Electronics Letters
+3.0,IEEE Access
+3.0,IEEE Journal of Selected
 3.0,IEEE Journal of Selected 
+3.0,IEEE Journal of Selected Topics in Quantum
 3.0,IEEE Journal of Selected Topics in Quantum 
 3.0,IEEE Journal of Selected Topics in Quantum …
 3.0,IEEE Journal of Selected …
 3.0,IEEE Photonics Journal
+3.0,IEEE Photonics Technology
 3.0,IEEE Photonics Technology 
 3.0,IEEE Photonics Technology Letters
 3.0,IEEE Photonics Technology …
 3.0,IEEE Sensors Journal
 3.0,International Journal of Optics
 3.0,Journal of Physics: Photonics
+3.0,Measurement
+3.0,Measurement Science and Technology
 3.0,OSA Continuum
 3.0,Optical Fiber Technology
 3.0,Optics & Laser Technology
@@ -42,6 +56,7 @@
 3.0,Science Advances
 3.0,Science Bulletin
 3.0,Sensors
+3.0,Sensors and Actuators B 
 3.0,Sensors and Actuators B …
 3.0,Structural Health Monitoring
 3.0,Structural health monitoring …
@@ -56,6 +71,7 @@
 2.0,Journal of Physics D: Applied …
 2.0,Journal of Physics: Conference Series
 2.0,Optical Engineering
+2.0,Optical Sensors
 2.0,Optical Sensors 
 2.0,Optik
 2.0,Physical Review A
@@ -65,11 +81,14 @@
 2.0,Sensor Review
 2.0,Sensors and Actuators A …
 2.0,Sensors and Actuators A: Physical
-2.0,Sensors and Actuators B 
+2.0,Sensors and Actuators B
 2.0,Sensors and Actuators B: Chemical
 2.0,arXiv e-prints
+2.0,arXiv preprint arXiv
 2.0,arXiv preprint arXiv 
 2.0,arXiv preprint arXiv …
+2.0,arXiv preprint arXiv:.00015
+2.0,arXiv preprint arXiv:.00155
 2.0,arXiv preprint arXiv:.00492
 2.0,arXiv preprint arXiv:.00676
 2.0,arXiv preprint arXiv:.00847
@@ -114,7 +133,6 @@
 2.0,arXiv preprint arXiv:.15353
 2.0,arXiv preprint arXiv:.16890
 2.0,arXiv preprint arXiv:.17068
-2.0,… of Lightwave Technology
 2.0,中国光学
 2.0,中国激光
 2.0,光子学报

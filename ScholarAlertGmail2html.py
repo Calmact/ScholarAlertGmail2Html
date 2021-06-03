@@ -1,40 +1,34 @@
 from __future__ import print_function
 import numpy as np
 import pickle
-import os.path
+import pandas as pd
+import os
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from apiclient import errors
-import yaml
 from bs4 import BeautifulSoup
-from bs4 import Tag
+# from bs4 import Tag
 import base64
+import urllib
 from retrying import retry
 import math
 import re
 from datetime import datetime, date, timedelta
-import csv
 from pytz import timezone
+import csv
 import copy
 from pytictoc import TicToc
-import shelve
-import bibtexparser
-from bibtexparser.bparser import BibTexParser
-from bibtexparser.customization import convert_to_unicode
-from bibtexparser.bibdatabase import BibDatabase
-from bibtexparser.bwriter import BibTexWriter
-import os
-from os import path as ospath
-from os import makedirs
 import webbrowser
+# from matplotlib import pyplot as plt
 
 # # Use http proxy as a global proxy
 # os.environ["http_proxy"] = "http://127.0.0.1:10809"
 # os.environ["https_proxy"] = "http://127.0.0.1:10809"
+
 file_dir = os.path.dirname(__file__)
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+SCOPES = ['https://www.googleapis.com/auth/gmail.modify'] # gmail.modify  gmail.readonly
 user_id = 'me'
 scholar_email = 'scholaralerts-noreply@google.com'
 cst_tz = timezone('Asia/Shanghai')
@@ -42,13 +36,21 @@ BROWSER_COMMAND = "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe %
 t = TicToc()
 
 subType_AuthCitation = 'citation'
-subType_AuthNew = 'new'
+subType_AuthNew = 'new article'
 subType_AuthRelated = 'related'
+subType_ArticleCitations = 'new citations'
+subType_kewWordNewResults = 'new results'
 typeVal = dict()
-typeVal[subType_AuthCitation] = 2
 typeVal[subType_AuthNew] = 8
-typeVal[subType_AuthRelated] = 1
-typeVal[''] = 0.5
+typeVal[subType_AuthCitation] = 2
+typeVal[subType_AuthRelated] = 0.5
+typeVal[subType_ArticleCitations] = 6
+typeVal[subType_kewWordNewResults] = 1.5
+typeVal[''] = 1
+
+class sag2hException(Exception):
+    # print(Exception)
+    pass
 
 @retry(wait_random_min=100, wait_random_max=1000, stop_max_attempt_number=4)
 # Takes a message id and reads the message using google api
@@ -124,6 +126,12 @@ def pullMessage(gmail, messages, maxDays, maxRange, scholarMessages):
     return scholarMessages
 
 
+# Mark email as being read (remove unread label)
+def markRead(gmail, message_description):
+    message_id = message_description['id']
+    body = {'removeLabelIds' : ['UNREAD']}  #  body = {"addLabelIds": [], "removeLabelIds": ["UNREAD", "INBOX"]}
+    return gmail.users().messages().modify(id=message_id, userId=user_id, body=body).execute()
+
 # Parsing the scholarMessages
 # Converting msg to pub
 # use forceRead = True when del the publication and re_read all scholarMessages, during this,
@@ -179,18 +187,17 @@ def getTitle(pubTag):
     else:
         return pubTag.text
 
-    return
-
 # Get the service interface of GmailApi, validate and save
 # the token.json and credentials.json files of GmailAPI
+# retry https://www.biaodianfu.com/python-error-retry.html
 @retry(wait_random_min=100, wait_random_max=1000, stop_max_attempt_number=4)
 def getGmailApi():
     creds = None
     # The file token.pickle stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
-    if not ospath.exists('json/'):
-        makedirs('json/')
+    if not os.path.exists('json/'):
+        os.makedirs('json/')
     if os.path.exists('json/token.json'):
         creds = Credentials.from_authorized_user_file('json/token.json', SCOPES)
         # If there are no (valid) credentials available, let the user log in.
@@ -198,9 +205,13 @@ def getGmailApi():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'json/credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
+            if os.access('json/credentials.json', os.F_OK):
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'json/credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+            else:
+                print('No credentials.json file, please download your credentials.json to the json folder')
+                raise sag2hException(1)
         # Save the credentials for the next run
         with open('json/token.json', 'w') as token:
             token.write(creds.to_json())
@@ -230,11 +241,11 @@ class Publication(object):
 
         urlstr = titleTag.find('a')['href']
         self.bib['url'] = urlstr
-        # urlstrip = re.findall('(?<=url=).*?(?=&)', urlstr)
-        # if len(urlstrip) > 0:
-        #     self.bib['url'] = urlstrip[0]
-        # else:
-        #     self.bib['url'] = urlstr
+        urlstrip = re.findall('(?<=url=).*?(?=&)', urlstr)
+        if len(urlstrip) > 0:
+            self.bib['url'] = urllib.parse.unquote(urlstrip[0])
+        else:
+            self.bib['url'] = urlstr
 
         authorYearStr = authorTag.text.replace(u'\xa0', u' ')
         self.bib['author'] = ' and '.join([i.strip() for i in authorYearStr.split(' - ')[0].split(',')])
@@ -251,14 +262,18 @@ class Publication(object):
         if 'class' in abstractTag.attrs\
                 and abstractTag.attrs['class'][0] == 'gse_alrt_sni':
             self.bib['abstract'] = abstractTag.text
+
         self.subjects = []
         self.messageIDs = []
         self.dateLists = []
-        self.score = 0
-        self.jonlScore = 0
+        self.authTypeList = []
         self.typeScores = []
         self.authScores = []
+        self.subjectScore = 0.0
+        self.score = 0.0
+        self.jonlScore = 0.0
 
+        # add a soup
         htmlstr = ' <html xmlns="http://www.w3.org/1999/xhtml" ' \
                   'xmlns:o="urn:schemas-microsoft-com:office:office">' \
                   '<head><style>body{background-color:#fff}.gse_alrt_title{text-decoration:none}' \
@@ -275,56 +290,79 @@ class Publication(object):
         #     titleTag.a['href'].replace(self.bib['url'])
         self.soup.html.body.div.append(titleTag)
         self.soup.html.body.div.append(authorTag)
+        # TODO_done delete the br tag in the abstract
+        for i in abstractTag.find_all('br'):
+            i.decompose()
         self.soup.html.body.div.append(abstractTag)
         self.soup.html.body.insert(1, shareTag)
-        # https://blog.csdn.net/lu8000/article/details/82313054
+        # [基础]-beautifulsoup模块使用详解 https://blog.csdn.net/lu8000/article/details/82313054
         # saveSoupTag(self.soup)
+        # saveSoupTag(abstractTag)
         # a = self.soup.prettify()
 
     def addHeaders(self, sMsg):
         headers = sMsg['payload']['headers']
         subject = getSubject(headers)
-        datetimMsg = getDate(headers)
+        datetimeMsg = getDate(headers)
         self.subjects.append(subject)
         self.messageIDs.append(sMsg['id'])
-        self.dateLists.append(datetimMsg)
+        self.dateLists.append(datetimeMsg)
 
-    def ratingScore(self, authVal, jonlVal):
-        rateScore = 0
-        self.jonlScore = 0
+    def ratingSubJonl(self, authVal, jonlVal):
+        self.score = 0.0
+        self.jonlScore = 0.0
+        self.subjectScore = 0.0
         self.typeScores = []
         self.authScores = []
+        self.authTypeList = pubSub2AuthorType(self.subjects)
         for i in range(len(self.subjects)):
-            [authScore, typeScore] = rateSub(self.subjects[i], authVal)
-            self.typeScores.append(typeScore)
-            self.authScores.append(authScore)
-            rateScore += authScore * typeScore
+            # [authScore, typeScore] = rateSub(self.subjects[i], authVal)
+            # self.typeScores.append(typeScore)
+            # self.authScores.append(authScore)
+            self.authScores.append(authVal[self.authTypeList[i][0]])
+            self.typeScores.append(typeVal[self.authTypeList[i][1]])
+            self.subjectScore += self.authScores[i] * self.typeScores[i]
         self.jonlScore = rateJonl(self, jonlVal)
-        rateScore = rateScore*self.jonlScore
-        self.score = rateScore
-        return rateScore
+
+    def ratingScore(self, authVal, jonlVal, k_factor):
+        authDict = dict()
+        for authType in self.authTypeList:
+            authDict[authType[0]] = 1.0
+        self.ratingSubJonl(authVal, jonlVal)
+        self.score = self.subjectScore*len(authDict)*self.jonlScore
+        return self.score
 
 # Use regular expressions to get the Alert author and Alert type
 # of the article email subject lists
-def pubSub2AuthorType(subListStr):
+def pubSub2AuthorType(subjectsList):
     AuthorTypeList = list()
     # re_name = '( ?\w+)( ?\w+)(-? ?\w+)'
-    re_name = '[\w\' .-]+'
-    re_ctbyEn = '(?<=to articles by )'+re_name
-    re_ctbyZh = re_name+'(?=的文章新增了 )'
-    re_nAtcEn = re_name+'(?= - new article)'
-    re_nAtcZh = re_name+'(?= - 新文章)'
-    re_rRshEn = re_name+'(?= - new related research)'
-    re_rRshZh = re_name+'(?= - 新的相关研究工作)'
-    for i in range(len(subListStr)):
+    re_name = '\w+[\w\' .-]+'
+    # re_ctbyEn = '(?<=to articles by )'+re_name
+    # re_ctbyZh = re_name+'(?=的文章新增了 )'
+    # re_nAtcEn = re_name+'(?= - new article)'
+    # re_nAtcZh = re_name+'(?= - 新文章)'
+    # re_rRshEn = re_name+'(?= - new related research)'
+    # re_rRshZh = re_name+'(?= - 新的相关研究工作)'
+    #
+    # re_nCtEn = '(?=- new citations)'
+    # re_nCtZh = '(?=- new citations)'
+    # re_nRtEn = '(?=- new results)'
+    # re_nRtZh = '(?= - 新的结果)'
+    for i in range(len(subjectsList)):
         auth = ''
         type = ''
-        resultCE = re.search(re_ctbyEn, subListStr[i])
-        resultCZ = re.search(re_ctbyZh, subListStr[i])
-        resultNE = re.search(re_nAtcEn, subListStr[i])
-        resultNZ = re.search(re_nAtcZh, subListStr[i])
-        resultRE = re.search(re_rRshEn, subListStr[i])
-        resultRZ = re.search(re_rRshZh, subListStr[i])
+        resultCE = re.search('(?<=to articles by )'+re_name, subjectsList[i])
+        resultCZ = re.search(re_name+'(?=的文章新增了 )', subjectsList[i])
+        resultNE = re.search(re_name+'(?= - new article)', subjectsList[i])
+        resultNZ = re.search(re_name+'(?= - 新文章)', subjectsList[i])
+        resultRE = re.search(re_name+'(?= - new related research)', subjectsList[i])
+        resultRZ = re.search(re_name+'(?= - 新的相关研究工作)', subjectsList[i])
+
+        resultnCtE = re.search('(?=- new citations)', subjectsList[i])
+        resultnCtZ = re.search('(?=- 新的引用)', subjectsList[i])
+        resultnRtE = re.search('(?=- new results)', subjectsList[i])
+        resultnRtZ = re.search('(?= - 新的结果)', subjectsList[i])
         if resultCE:
             auth = resultCE[0]
             type = subType_AuthCitation
@@ -343,13 +381,20 @@ def pubSub2AuthorType(subListStr):
         elif resultRZ:
             auth = resultRZ[0]
             type = subType_AuthRelated
+
+        elif resultnCtE or resultnCtZ:
+            auth = 'Articles'
+            type = subType_ArticleCitations
+        elif resultnRtE or resultnRtZ:
+            auth = 'Key words'
+            type = subType_kewWordNewResults
         AuthorTypeList.append([auth, type])
     return AuthorTypeList
 
 # parse a single subject and get the corresponding [authScore, typeScore].
 def rateSub(subject, authVal):
-    authScore = 1
-    typeScore = 1
+    authScore = 1.0
+    typeScore = 1.0
     [[auth, type]] = pubSub2AuthorType([subject])
     if auth in authVal:
         authScore = authVal[auth]
@@ -367,9 +412,12 @@ def rateJonl(publication, jonlVal):
 
 # rate the publications and get the soted scores and the sorted idxe
 def rateSortPubs(publications, authVal, jonlVal):
+    for idx in range(len(publications)):
+        publications[idx].ratingSubJonl(authVal, jonlVal)
+    k_factor = scoreFactor(publications)
     scorePubs = [0.0 for i in range(len(publications))]
     for idx in range(len(publications)):
-        scorePubs[idx] = publications[idx].ratingScore(authVal, jonlVal)
+        scorePubs[idx] = publications[idx].ratingScore(authVal, jonlVal, k_factor)
     sorted_idx = sorted(range(len(scorePubs)),
                        key=lambda k: publications[k].score,
                        reverse=True)
@@ -377,7 +425,7 @@ def rateSortPubs(publications, authVal, jonlVal):
     return [scorePubs, sorted_scorePubs, sorted_idx]
 
 # save the pub to html file according to date range
-def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
+def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0, authVal = dict(), jonlVal = dict()):
     if dateRange == 0:
         dateRange = [date.today() - timedelta(days=30), date.today()]
     trueDateTimeRange = [datetime.now()]*2
@@ -398,7 +446,8 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
     # html head
     htmlstr = ' <html xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">' \
               '<head> <meta http-equiv="Content-Type" content="text/html;charset=UTF-8" /> <style>' \
-              '.main{ text-align: left;  background-color: #fff; margin: auto; ' \
+              'gse_alrt_sni{text-align:justify}' \
+              '.main{ text-align:justify;  background-color: #fff; margin: auto; ' \
               'position: absolute; top: 110; left: 0; right: 0; bottom: 0; }' \
               '</style></head>' \
               '<body>' '<div class="main" style="font-family:arial,sans-serif;' \
@@ -433,45 +482,74 @@ def savPub2html(publications, sorted_idx, fileNameHtml = 0, dateRange=0):
     idx_pub = 0
     for i in range(len(sorted_idx)):
         pub = publications[sorted_idx[i]]
+        if pub.score == 0 or pub.subjectScore == 0 or pub.jonlScore == 0:
+            continue
         if (min(pub.dateLists).date()-dateRange[0]).days >= 0 and \
                 (min(pub.dateLists).date()-dateRange[1]).days <= 0:
-            idx_pub += 1
-            # add a idx before the title
+            # copy the pub tag from the email
             pubTag = copy.copy(pub.soup.html.body.div)
+            # insert a idx before the title
+            idx_pub += 1
             a = soup.new_tag('span')
             a['style'] = "font-size:11px;font-weight:bold;color:#1a0dab;vertical-align:2px"
-            # a['class'] = "title1"
             strNum = ('%d'%(idx_pub))+'.  '
             a.insert(0, strNum)
             pubTag.h3.insert(0, a)
-            soup.html.body.div.next_sibling.next_sibling.append(pubTag)
+
+            # add the title/author/abstract Tag
+            pubTag.div.next_sibling['style'] = 'text-align:justify'
+            pubTag.h3.a['href'] = pub.bib['url']
             # add the subject and the datetime of the subject
-            # TODO add the subject scores (authScore and typeScore)
-            #
-            for j in range(len(pub.dateLists)):
+            sort_subjectScore_idx = sorted(range(len(pub.dateLists)),
+                                    key=lambda k:
+                                    [pub.authScores[k]*pub.typeScores[k],
+                                    pub.typeScores[k],
+                                    pub.authScores[k]],
+                                    reverse=True)
+            subScore = 0
+            for j in sort_subjectScore_idx:
                 a = soup.new_tag("div")
                 a['style'] = "font-family:arial,sans-serif;font-size:13px;line-height:18px;color:#993456"
-                str = pub.dateLists[j].strftime("%Y-%m-%d, %H:%M:%S")\
-                      + ' -- ' + pub.subjects[j]
-                a.insert(0, str)
-                soup.html.body.div.next_sibling.next_sibling.append(a)
-            pubTag = copy.copy(pub.soup.html.body.div.find_next_sibling('div'))
+                # TODO_done add the subject scores (authScore and typeScore)
+                # [[auth, type]] = pubSub2AuthorType([pub.subjects[j]])
+                [auth, type] = pub.authTypeList[j]
+                str_add = pub.dateLists[j].strftime("%Y-%m-%d, %H:%M:%S")\
+                      +' -- '+ "{:3.1f}".format(authVal[auth]*typeVal[type])\
+                      + ' -- ['+ auth +' | '+ type + '] '\
+                      +'[' +"{:02.1f}".format(authVal[auth])+ ' | '+"{:02.1f}".format(typeVal[type])\
+                      +']' + ' -- '+ pub.subjects[j]
+                a.insert(0, str_add)
+                pubTag.append(a)
+                subScore += authVal[auth]*typeVal[type];
+            a = soup.new_tag("div")
+            a['style'] = "font-family:arial,sans-serif;" \
+                         "font-size:13px;line-height:18px;color:#993456"
+            str_add = "<div><b>"+"{:3.1f}".format(pub.score)+'</b><sub>(Totle Score)</sub>; '+\
+                      "<b>"+"{:3.1f}".format(subScore)+'</b><sub>((Subject Score)</sub>; '+\
+                      "<b>"+"{:3.1f}".format(pub.jonlScore)+'</b><sub>(Journal Score)</sub></div>' #×
+            a.append(BeautifulSoup(str_add, 'html.parser'))
+            # saveSoupTag(a)
+            pubTag.h3.next_sibling.next_sibling.append(a)
+            pubTag.append(copy.copy(pub.soup.html.body.div.find_next_sibling('div')))
+            pubTag.append(soup.new_tag('br'))
+            # saveSoupTag(pubTag)
+            # saveSoupTag(soup)
             soup.html.body.div.next_sibling.next_sibling.append(pubTag)
-            soup.html.body.div.next_sibling.next_sibling.append(soup.new_tag('br'))
+            # soup.html.body.div.next_sibling.next_sibling.append(soup.new_tag('br'))
     if fileNameHtml == 0:
-        fileNameHtml = ospath.join(file_dir, 'html/'+correct_FileName(strRg,'_')+'.html')
-    if not ospath.exists('html/'):
-        makedirs('html/')
+        fileNameHtml = os.path.join(file_dir, 'html/'+correct_FileName(strRg,'_')+'.html')
+    if not os.path.exists('html/'):
+        os.makedirs('html/')
     saveSoupTag(soup, fileNameHtml)
     return fileNameHtml
 
-# save the souptag file as html for test use
+# save the souptag file as html for Logs use
 def saveSoupTag(soup, fileNameHtml = 'html/temp.html'):
     HTML_str = soup.prettify()
     with open(fileNameHtml, 'w', encoding='utf-8') as f:
         f.write(HTML_str)
 
-# Get the ids from Gmail API according the lables
+# Validate the gmail labels
 def GetLabelsId(service, user_id, label_names=[]):
     results = service.users().labels().list(userId=user_id).execute()
     labels = results.get('labels', [])
@@ -510,6 +588,7 @@ def ListMessagesWithLabels(service, user_id, labels, messagesOld):
     messages = list()
     msgDictOld = mkMsgDict(messagesOld)
     label_ids = GetLabelsId(gmail, user_id, labels)
+    # query="from:" + scholar_email
     try:
         response = service.users().messages().list(userId=user_id,
                                                    labelIds=label_ids,
@@ -571,7 +650,7 @@ def pklLoad(pklFileName):
             messages = pkls[0]
             scholarMessages = pkls[1]
             publications = pkls[2]
-            # chack the type of the loaded, clear if not a list
+            # check the type of the loaded, clear if not a list
             if type(messages) != type([]):
                 message = list()
             if type(scholarMessages) != type([]):
@@ -583,8 +662,8 @@ def pklLoad(pklFileName):
             # return messages, scholarMessages, publications, sglMsgDict, pubTitDict
             return messages, scholarMessages, publications
     else:
-        if not ospath.exists('pkl/'):
-            makedirs('pkl/')
+        if not os.path.exists('pkl/'):
+            os.makedirs('pkl/')
         messages = list()
         scholarMessages = list()
         publications = list()
@@ -612,9 +691,9 @@ def listOfList(strList = list()):
 # and columns of data list as list of str or list of list of str
 def saveCSV(fileName, header, list1=list(), list2=list()):
     data = list()
-    if type(list1[0]) == type(str()):
+    if len(list1)>0 and type(list1[0]) == type(str()):
         list1 = listOfList(list1)
-    if type(list2[0]) == type(str()):
+    if len(list2)>0 and type(list2[0]) == type(str()):
         list2 = listOfList(list2)
     for i in range(len(list1)):
         data.append(list1[i]+list2[i])
@@ -629,6 +708,8 @@ def saveCSV(fileName, header, list1=list(), list2=list()):
 # using the alert subjects in publications for author in AuthVal
 def getAuthJonlcsv(publications, filePathName ='csv/AuthVal.csv'):
     fileName = filePathName.split('.')[0].split('/')[1]
+    # TODO pandas the csvs
+    # pdcsv = pd.read_csv(filePathName)
     ajValDict = dict()
     if os.access(filePathName, os.F_OK):
         ajValHd = list()
@@ -650,32 +731,54 @@ def getAuthJonlcsv(publications, filePathName ='csv/AuthVal.csv'):
         for avl in ajValList:
             ajValDict[avl[1]] = float(avl[0])
     else:
-        if not ospath.exists('csv/'):
-            makedirs('csv/')
-        ajDict = dict()
-        if 'Auth' in filePathName:
-            subDict = dict()
-            for pub in publications:
-                for sub in pub.subjects:
-                    subDict[sub] = 1
-            subListStr = [i for i in subDict.keys()]
-            AuthorTypeList = pubSub2AuthorType(subListStr)
-            # saveCSV('csv/Auth_Type_Sub.csv', ['Author', 'Type', 'Subject'], AuthorTypeList, subListStr)
-            for auth in AuthorTypeList:
-                ajDict[auth[0]] = 1.0
-        elif'Jonl' in filePathName:
-            for pub in publications:
-                if 'journal' in pub.bib:
-                    ajDict[pub.bib['journal']] = 1.0
+        if not os.path.exists('csv/'):
+            os.makedirs('csv/')
+        ajDict = ajDictInit(publications, filePathName)
         ajList = [i for i in ajDict.keys()]
         for i in range(len(ajList)):
             ajValDict[ajList[i]] = 1.0
         saveAjvDict(ajValDict, filePathName)
     return ajValDict
 
-def loadAuthJonlVal(getAuthJonlcsv, fileName ='AuthVal'):
+def ajDictInit(publications, filePathName):
+    ajDict = dict()
+    if 'Auth' in filePathName:
+        subDict = dict()
+        for pub in publications:
+            for sub in pub.subjects:
+                subDict[sub] = 1
+        subListStr = [i for i in subDict.keys()]
+        AuthorTypeList = pubSub2AuthorType(subListStr)
+        # saveCSV('csv/Auth_Type_Sub.csv', ['Author', 'Type', 'Subject'], AuthorTypeList, subListStr)
+        for auth in AuthorTypeList:
+            ajDict[auth[0]] = 1.0
+    elif 'Jonl' in filePathName:
+        for pub in publications:
+            if 'journal' in pub.bib:
+                ajDict[pub.bib['journal']] = 1.0
+    return ajDict
+
+
+def loadAuthJonlVal(publications, fileName ='AuthVal'):
     ajValDict = getAuthJonlcsv(publications,'csv/'+fileName+'.csv')
-    if os.access('csv/'+fileName+' - bak.csv', os.F_OK):
+    ajDict = ajDictInit(publications, 'csv/' + fileName + '.csv')
+    for aj in ajDict:
+        if aj not in ajValDict:
+            ajValDict[aj] = 1.0
+    if os.access('csv/' + fileName + '-simplify.csv', os.F_OK):
+        ajVal_simpl = getAuthJonlcsv(publications,'csv/'+fileName+'-simplify.csv')
+        #update condition.
+        # force update
+        for ajVo in ajVal_simpl:
+            ajValDict[ajVo] = ajVal_simpl[ajVo]
+        # save the ajValDict and simplified ajValDict
+        saveAjvDict(ajValDict, 'csv/' + fileName + '.csv')
+        ajValDict_simpl = ajValDict.copy()
+        for key in list(ajValDict_simpl):
+            if ajValDict_simpl[key] == 1:
+                ajValDict_simpl.pop(key)
+        saveAjvDict(ajValDict_simpl, 'csv/' + fileName + '-simplify.csv')
+    if os.access('csv/'+fileName+'-backup.csv', os.F_OK):
         ajVal_old = getAuthJonlcsv(publications,'csv/'+fileName+'-backup.csv')
         #update condition.
         # a. key exists in ajValDict. force update if the ajValDict key value is 1.
@@ -686,15 +789,9 @@ def loadAuthJonlVal(getAuthJonlcsv, fileName ='AuthVal'):
                     ajValDict[ajVo] = ajVal_old[ajVo]
             else:
                 ajValDict[ajVo] = ajVal_old[ajVo]
-    if os.access('csv/' + fileName + '-simplify.csv', os.F_OK):
-        ajVal_simpl = getAuthJonlcsv(publications,'csv/'+fileName+'-simplify.csv')
-        #update condition.
-        # force update
-        for ajVo in ajVal_simpl:
-            ajValDict[ajVo] = ajVal_simpl[ajVo]
     # save the ajValDict and simplified ajValDict
     saveAjvDict(ajValDict, 'csv/' + fileName + '.csv')
-    ajValDict_simpl = ajValDict
+    ajValDict_simpl = ajValDict.copy()
     for key in list(ajValDict_simpl):
         if ajValDict_simpl[key] == 1:
             ajValDict_simpl.pop(key)
@@ -721,6 +818,36 @@ def saveAjvDict(ajValDict, filePathName):
         valList = [str(ajValDict[i]) for i in ajList]
         saveCSV(filePathName, ['Value', 'Jonl'], valList, ajList)
 
+def scoreFactor(publications):
+    idx_np = np.arange(0, len(publications))
+    scoreArray = np.zeros([len(publications), 3])
+    for i in range(len(publications)):
+        scoreArray[i, 0] = publications[i].subjectScore
+        scoreArray[i, 1] = publications[i].jonlScore
+        # scoreArray[i, 2] = publications[i].subjects
+    a = -np.sort(-scoreArray[:, 0:2].T).T
+    a20 = a[0:int(np.floor(a[:,0].size / 5)),:]
+    a.mean(axis=0)
+    a.std(axis=0)
+    a20.mean(axis=0)
+    a20.std(axis=0)
+    # plt.plot(idx_np/idx_np.max()*100,a)
+    # plt.xlabel('Index pencentage (%)')
+    # plt.ylabel('Subject score (a.u.)')
+    # plt.title('_Min '+str(a20.min(axis = 0)[0])+'  Max '+str(a20.max(axis = 0)[0])+'/'+
+    #           ' Min '+str(a20.min(axis = 0)[1])+'  Max '+str(a20.max(axis = 0)[1]))
+    # plt.xlim([0, 20])
+    # plt.grid()
+    # plt.show()
+
+    k_factor =  a20.mean(axis=0)[0] / a20.mean(axis=0)[1]
+    scoreArray[:, 2] = scoreArray[:, 0] + scoreArray[:, 1] * k_factor
+    sortIdx = np.argsort(-scoreArray[:, 2])
+    # plt.plot(idx_np / idx_np.max() * 100, scoreArray[sortIdx,:])
+    # plt.grid()
+    # plt.show()
+    return float(k_factor)
+
 
 if __name__ == '__main__':
     # load all the cached data
@@ -740,7 +867,9 @@ if __name__ == '__main__':
     print('Found %d messages' % len(messages))
 
     # pull the scholarMessages from GmailApi
-    maxDays = 65
+    # dateRange = [date(2021,1,1), date(2021,6,1)]
+    dateRange = [date.today() - timedelta(days=1), date.today()]
+    maxDays = (date.today()-dateRange[0]).days
     maxRange = 5000
     scholarMessages = pullMessage(gmail, messages, maxDays, maxRange, scholarMessages)
     pklSave(pklFileName, messages, scholarMessages, publications)
@@ -756,8 +885,8 @@ if __name__ == '__main__':
     print('Got %d Pubs' % len(publications))
 
     # # rating the Pubs
-    authVal = loadAuthJonlVal(getAuthJonlcsv, 'AuthVal')
-    jonlVal = loadAuthJonlVal(getAuthJonlcsv, 'JonlVal')
+    authVal = loadAuthJonlVal(publications, 'AuthVal')
+    jonlVal = loadAuthJonlVal(publications, 'JonlVal')
     t.tic()
     [scorePubs, sorted_scorePubs, sorted_idx] = rateSortPubs(publications, authVal, jonlVal)
     t.toc()
@@ -766,10 +895,8 @@ if __name__ == '__main__':
 
     # save the html file using the dateRange
     # fileNameHtml = 'html/html_soup_joint1.html'
-    dateRange = [date(2021,5,1), date(2021,5,7)]
-    # dateRange = [date.today() - timedelta(days=60), date.today()]
     t.tic()
-    fileNameHtml = savPub2html(publications, sorted_idx,0, dateRange)
+    fileNameHtml = savPub2html(publications, sorted_idx, 0, dateRange, authVal, jonlVal)
     t.toc()
     print('Html file saved at %s' %fileNameHtml)
 
@@ -779,31 +906,5 @@ if __name__ == '__main__':
     except:
         print('Open the html file failed')
 
-    # # Test of Rate score
-    # idx = 108
-    # publications[idx].subjects
-    # publications[idx].ratingScore(authVal)
-    # for pub in publications:
-    #     pub.ratingScore(authVal)
-    #     print(pub.score)
-
-    # # TODO1 : encode of Fernández //
-    # 1. use encoding='utf-8_sig' for encode the save and read file
-    # 2. use re_name = '[\w\' .-]+' to match the name in re.match
-    # rateSub(subject, authVal) pubSub2AuthorType([subject])
-
-
-    # re_name = '[\w\' .-]+'
-    # re_ctbyZh = re_name + '(?=的文章新增了 )'
-    # a = 'María R. Fernández-Ruiz的文章新增了 2 次引用'
-    # a2 = 'Regina Magalhães的文章新增了 1 次引用'
-    # result = re.match(re_ctbyZh, a2)
-    # if result:
-    #     print(result[0])
-    # a1 = list()
-    # a2 = list()
-    # with open('eggs.csv',encoding='gb18030') as f:
-    #     f_csv = csv.reader(f)
-    #     a1 = next(f_csv)
-    #     for row in f_csv:
-    #         a2.append(row)
+    # for message in messages[0:10]:
+    #     markRead(gmail, message)
