@@ -20,11 +20,21 @@
 ## Setting for first use / 初次使用
 * Follow the steps in [Gmail API Client Library](https://developers.google.com/gmail/api/quickstart/python) ,  rename the `client_secret_XXXXXXXX_.json` to
 `credentials.json`  and place it into the `/json` folder. When you firstly run the `ScholarAlertGmail2html.py`, you will get a `token.joson` in `/json` folder.
+  * If you can't access the google api directly, you can use a proxy as a global proxy
+    ```python
+    import os
+    # Use http proxy as a global proxy
+    os.environ["http_proxy"] = "http://127.0.0.1:10809"
+    os.environ["https_proxy"] = "http://127.0.0.1:10809"
+    ```
+    change to your proxy setting and insert the code before the main function in `quickstart.py`  
+  <br>
 * 按照[Gmail API Client Library](https://developers.google.com/gmail/api/quickstart/python) 中的步骤，将`client_secret_XXXXXX_.json`重命名为`credentials.json`并放入`/json`文件夹。当你第一次运行`ScholarAlertGmail2html.py`时，你会在`/json`文件夹中得到`token.joson`。
 ## Usage
 * Run `ScholarAlertGmail2html.py` using Python 3.
 * If you can't access the google api directly, you can use a proxy as a global proxy by remove the markers in the `ScholarAlertGmail2html.py`
 ```python
+import os
 # Use http proxy as a global proxy
 os.environ["http_proxy"] = "http://127.0.0.1:10809"
 os.environ["https_proxy"] = "http://127.0.0.1:10809"
